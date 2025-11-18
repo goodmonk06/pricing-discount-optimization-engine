@@ -1,0 +1,74 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id        String   @id @default(cuid())
+  sku       String   @unique
+  name      String
+  basePrice Float
+  currency  String   @default("USD")
+  metaJson  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  priceRules           PriceRule[]
+  priceEvaluationLogs  PriceEvaluationLog[]
+  performanceSnapshots PerformanceSnapshot[]
+
+  @@index([sku])
+}
+
+model PriceRule {
+  id             String   @id @default(cuid())
+  productId      String
+  name           String
+  conditionJson  Json // e.g., { "segment": "vip", "channel": "web" }
+  adjustmentJson Json // e.g., { "type": "percent_off", "value": 10 }
+  priority       Int      @default(0) // Lower number = higher priority
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, active])
+  @@index([priority])
+}
+
+model PriceEvaluationLog {
+  id               String   @id @default(cuid())
+  productId        String
+  inputContextJson Json // User context, channel, timestamp, etc.
+  finalPrice       Float
+  breakdownJson    Json // Which rules were applied and how
+  createdAt        DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([createdAt])
+}
+
+model PerformanceSnapshot {
+  id        String   @id @default(cuid())
+  productId String
+  date      DateTime
+  views     Int      @default(0)
+  purchases Int      @default(0)
+  revenue   Float    @default(0)
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, date])
+  @@index([productId])
+  @@index([date])
+}
