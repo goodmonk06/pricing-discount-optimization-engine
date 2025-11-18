@@ -10,36 +10,58 @@ datasource db {
 }
 
 model Product {
-  id        String   @id @default(cuid())
-  sku       String   @unique
-  name      String
-  basePrice Float
-  currency  String   @default("USD")
-  metaJson  Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  description String?
+  basePrice   Float
+  currency    String   @default("USD")
+  categoryId  String?
+  regionId    String?
+  status      String   @default("active") // active, inactive, archived
+  tags        String[] // For flexible categorization
+  metaJson    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
+  category             ProductCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  region               GeographicRegion?    @relation(fields: [regionId], references: [id], onDelete: SetNull)
   priceRules           PriceRule[]
   priceEvaluationLogs  PriceEvaluationLog[]
   performanceSnapshots PerformanceSnapshot[]
+  priceHistories       PriceHistory[]
+  bundleProducts       BundleProduct[]
 
   @@index([sku])
+  @@index([categoryId])
+  @@index([status])
 }
 
 model PriceRule {
   id             String   @id @default(cuid())
-  productId      String
+  productId      String?
+  categoryId     String? // Rules can apply to entire categories
+  campaignId     String?
+  abTestVariantId String?
   name           String
+  description    String?
   conditionJson  Json // e.g., { "segment": "vip", "channel": "web" }
   adjustmentJson Json // e.g., { "type": "percent_off", "value": 10 }
   priority       Int      @default(0) // Lower number = higher priority
   active         Boolean  @default(true)
+  validFrom      DateTime?
+  validUntil     DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product       Product?        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category      ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  campaign      Campaign?       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  abTestVariant ABTestVariant?  @relation(fields: [abTestVariantId], references: [id], onDelete: Cascade)
 
   @@index([productId, active])
+  @@index([categoryId, active])
+  @@index([campaignId])
   @@index([priority])
 }
 
@@ -71,4 +93,220 @@ model PerformanceSnapshot {
   @@unique([productId, date])
   @@index([productId])
   @@index([date])
+}
+
+// New Phase 3 Entities
+
+model ProductCategory {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  parentId    String? // For hierarchical categories
+  metaJson    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parent     ProductCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children   ProductCategory[] @relation("CategoryHierarchy")
+  products   Product[]
+  priceRules PriceRule[]
+
+  @@index([slug])
+  @@index([parentId])
+}
+
+model Campaign {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  status      String    @default("draft") // draft, scheduled, active, paused, ended
+  startDate   DateTime?
+  endDate     DateTime?
+  budget      Float?
+  targetJson  Json? // Target metrics, audience
+  metaJson    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  priceRules           PriceRule[]
+  campaignPerformances CampaignPerformance[]
+
+  @@index([status])
+  @@index([startDate, endDate])
+}
+
+model CampaignPerformance {
+  id         String   @id @default(cuid())
+  campaignId String
+  date       DateTime
+  views      Int      @default(0)
+  clicks     Int      @default(0)
+  purchases  Int      @default(0)
+  revenue    Float    @default(0)
+  cost       Float    @default(0)
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, date])
+  @@index([campaignId])
+  @@index([date])
+}
+
+model CustomerSegment {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  description   String?
+  criteriaJson  Json // Criteria for automatic assignment
+  priority      Int      @default(0) // For overlapping segments
+  active        Boolean  @default(true)
+  metaJson      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships SegmentMembership[]
+
+  @@index([active])
+  @@index([priority])
+}
+
+model SegmentMembership {
+  id         String   @id @default(cuid())
+  segmentId  String
+  customerId String
+  assignedAt DateTime @default(now())
+  expiresAt  DateTime?
+  metaJson   Json? // Additional membership data
+
+  segment CustomerSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  @@unique([segmentId, customerId])
+  @@index([customerId])
+  @@index([expiresAt])
+}
+
+model GeographicRegion {
+  id              String   @id @default(cuid())
+  name            String
+  code            String   @unique
+  countryCode     String
+  currency        String
+  taxRate         Float    @default(0)
+  priceMultiplier Float    @default(1.0)
+  active          Boolean  @default(true)
+  metaJson        Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  products Product[]
+
+  @@index([code])
+  @@index([countryCode])
+}
+
+model PriceHistory {
+  id        String   @id @default(cuid())
+  productId String
+  oldPrice  Float
+  newPrice  Float
+  reason    String? // manual, rule_change, campaign, optimization
+  changedBy String? // User ID or system identifier
+  ruleId    String?
+  metaJson  Json?
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([createdAt])
+}
+
+model ABTest {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  hypothesis  String?
+  status      String    @default("draft") // draft, running, paused, completed
+  startDate   DateTime?
+  endDate     DateTime?
+  trafficSplit Float    @default(50) // Percentage for variant A
+  metricGoal  String? // conversion_rate, revenue, avg_order_value
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  variants ABTestVariant[]
+
+  @@index([status])
+  @@index([startDate, endDate])
+}
+
+model ABTestVariant {
+  id          String   @id @default(cuid())
+  abTestId    String
+  name        String // "Control", "Variant A", "Variant B"
+  description String?
+  isControl   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  abTest      ABTest       @relation(fields: [abTestId], references: [id], onDelete: Cascade)
+  priceRules  PriceRule[]
+  results     ABTestResult[]
+
+  @@unique([abTestId, name])
+  @@index([abTestId])
+}
+
+model ABTestResult {
+  id          String   @id @default(cuid())
+  variantId   String
+  date        DateTime
+  views       Int      @default(0)
+  conversions Int      @default(0)
+  revenue     Float    @default(0)
+  createdAt   DateTime @default(now())
+
+  variant ABTestVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, date])
+  @@index([variantId])
+  @@index([date])
+}
+
+model BundleRule {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  bundleType     String // fixed_bundle, bogo, quantity_discount
+  discountType   String // percent_off, fixed_off, fixed_price
+  discountValue  Float
+  minQuantity    Int      @default(1)
+  active         Boolean  @default(true)
+  validFrom      DateTime?
+  validUntil     DateTime?
+  metaJson       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  products BundleProduct[]
+
+  @@index([active])
+  @@index([bundleType])
+}
+
+model BundleProduct {
+  id          String   @id @default(cuid())
+  bundleId    String
+  productId   String
+  quantity    Int      @default(1)
+  required    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  bundle  BundleRule @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleId, productId])
+  @@index([bundleId])
+  @@index([productId])
 }
